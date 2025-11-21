@@ -5,6 +5,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router as api_router
+from .api.webhook_routes import router as webhook_router, simulation_router
 from .database import init_db
 from .dependencies import connection_manager
 
@@ -39,3 +40,5 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str) -> None:
 
 
 app.include_router(api_router)
+app.include_router(webhook_router)
+app.include_router(simulation_router)

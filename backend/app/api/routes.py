@@ -135,7 +135,7 @@ async def list_products(
         result = await session.execute(query)
         records = result.scalars().all()
         LOGGER.info("Retrieved %d products", len(records))
-        return [ProductRead.model_validate(record) for record in records]
+        return [ProductRead.model_validate(record, from_attributes=True) for record in records]
     except Exception as exc:
         LOGGER.error("Error fetching products: %s", exc, exc_info=True)
         raise HTTPException(
@@ -193,7 +193,7 @@ async def create_product(
         product = result.scalar_one()
 
         LOGGER.info("Successfully created/updated product with SKU: %s", normalized_sku)
-        return ProductRead.model_validate(product)
+        return ProductRead.model_validate(product, from_attributes=True)
 
     except HTTPException:
         raise
@@ -212,6 +212,64 @@ async def create_product(
         ) from exc
 
 
+@router.put("/products/{sku}", response_model=ProductRead)
+async def update_product(
+    sku: str,
+    product_data: ProductCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ProductRead:
+    """Update an existing product."""
+    try:
+        # Normalize SKU
+        normalized_sku = sku.strip().lower()
+
+        # Check if product exists
+        result = await session.execute(select(Product).where(Product.sku == normalized_sku))
+        product = result.scalar_one_or_none()
+
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with SKU '{normalized_sku}' not found",
+            )
+
+        if not product_data.name.strip():
+            LOGGER.warning("Attempted to update product with empty name (SKU: %s)", normalized_sku)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Product name cannot be empty",
+            )
+
+        LOGGER.info("Updating product with SKU: %s", normalized_sku)
+
+        # Update product fields (SKU cannot be changed)
+        product.name = product_data.name.strip()
+        product.description = product_data.description.strip() if product_data.description else None
+        product.is_active = product_data.is_active
+
+        await session.commit()
+        await session.refresh(product)
+
+        LOGGER.info("Successfully updated product with SKU: %s", normalized_sku)
+        return ProductRead.model_validate(product, from_attributes=True)
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        LOGGER.error("Database error while updating product (SKU: %s): %s", sku, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update product",
+        ) from exc
+    except Exception as exc:
+        LOGGER.error("Unexpected error while updating product (SKU: %s): %s", sku, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update product",
+        ) from exc
+
+
 @router.delete("/products/all", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_all_products(session: AsyncSession = Depends(get_session)) -> Response:
     """Truncate the products table."""
@@ -226,6 +284,51 @@ async def delete_all_products(session: AsyncSession = Depends(get_session)) -> R
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete products",
+        ) from exc
+
+
+@router.delete("/products/{sku}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_product(
+    sku: str,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Delete a single product by SKU."""
+    try:
+        # Normalize SKU
+        normalized_sku = sku.strip().lower()
+
+        # Check if product exists
+        result = await session.execute(select(Product).where(Product.sku == normalized_sku))
+        product = result.scalar_one_or_none()
+
+        if not product:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Product with SKU '{normalized_sku}' not found",
+            )
+
+        LOGGER.info("Deleting product with SKU: %s", normalized_sku)
+
+        await session.delete(product)
+        await session.commit()
+
+        LOGGER.info("Successfully deleted product with SKU: %s", normalized_sku)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        LOGGER.error("Database error while deleting product (SKU: %s): %s", sku, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete product",
+        ) from exc
+    except Exception as exc:
+        LOGGER.error("Unexpected error while deleting product (SKU: %s): %s", sku, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete product",
         ) from exc
 
 

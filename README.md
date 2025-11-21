@@ -2,6 +2,11 @@
 
 A full-stack application for managing products and testing webhooks.
 
+## Deployed URL
+
+Frontend: https://fulfil-io-task-fe.onrender.com
+Backend Swagger Docs: https://fulfil-io-task.onrender.com/docs
+
 ## Features
 
 ### Product Management

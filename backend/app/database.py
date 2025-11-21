@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-import ssl
+import ssl, certifi
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -16,6 +16,8 @@ from .core.config import get_settings
 settings = get_settings()
 
 ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
 engine: AsyncEngine = create_async_engine(
     settings.database_url,

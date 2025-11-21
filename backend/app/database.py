@@ -1,14 +1,21 @@
 """Database configuration helpers for the FastAPI application."""
 from __future__ import annotations
 
-import os
+from collections.abc import AsyncIterator
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost:5432/postgres")
+from .core.config import get_settings
+
+settings = get_settings()
 
 engine: AsyncEngine = create_async_engine(
-    DATABASE_URL,
+    settings.database_url,
     future=True,
     pool_pre_ping=True,
 )
@@ -24,6 +31,7 @@ async def init_db() -> None:
         await conn.run_sync(models.Base.metadata.create_all)
 
 
-def get_session() -> AsyncSession:
-    """Return a new async session for request-scoped usage."""
-    return SessionLocal()
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """Yield a new async session for request-scoped usage."""
+    async with SessionLocal() as session:
+        yield session

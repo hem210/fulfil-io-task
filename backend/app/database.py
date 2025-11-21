@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+import ssl
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -14,10 +15,13 @@ from .core.config import get_settings
 
 settings = get_settings()
 
+ssl_context = ssl.create_default_context()
+
 engine: AsyncEngine = create_async_engine(
     settings.database_url,
     future=True,
     pool_pre_ping=True,
+    connect_args={"ssl": ssl_context}
 )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)

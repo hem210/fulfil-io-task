@@ -16,13 +16,15 @@ from fastapi import (
     status,
 )
 from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import SessionLocal, get_session
 from ..dependencies import get_connection_manager
 from ..models import Product
 from ..processor import process_upload_job
-from ..schemas.product import ProductRead
+from ..schemas.product import ProductCreate, ProductRead
 from ..services.connection_manager import ConnectionManager
 from ..utils.logging import get_logger
 
@@ -139,6 +141,74 @@ async def list_products(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve products",
+        ) from exc
+
+
+@router.post("/products", status_code=status.HTTP_201_CREATED, response_model=ProductRead)
+async def create_product(
+    product_data: ProductCreate,
+    session: AsyncSession = Depends(get_session),
+) -> ProductRead:
+    """Create or update a single product."""
+    try:
+        # Normalize SKU: lowercase and strip whitespace
+        normalized_sku = product_data.sku.strip().lower()
+        if not normalized_sku:
+            LOGGER.warning("Attempted to create product with empty SKU")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="SKU cannot be empty",
+            )
+
+        if not product_data.name.strip():
+            LOGGER.warning("Attempted to create product with empty name (SKU: %s)", normalized_sku)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Product name cannot be empty",
+            )
+
+        LOGGER.info("Creating/updating product with SKU: %s", normalized_sku)
+
+        # Prepare product data with normalized SKU
+        product_dict = {
+            "sku": normalized_sku,
+            "name": product_data.name.strip(),
+            "description": product_data.description.strip() if product_data.description else None,
+            "is_active": product_data.is_active,
+        }
+
+        # Upsert product (insert or update on conflict)
+        stmt = insert(Product).values(product_dict)
+        update_cols = {
+            "name": stmt.excluded.name,
+            "description": stmt.excluded.description,
+            "is_active": stmt.excluded.is_active,
+        }
+        stmt = stmt.on_conflict_do_update(index_elements=[Product.sku], set_=update_cols)
+        await session.execute(stmt)
+        await session.commit()
+
+        # Fetch the created/updated product
+        result = await session.execute(select(Product).where(Product.sku == normalized_sku))
+        product = result.scalar_one()
+
+        LOGGER.info("Successfully created/updated product with SKU: %s", normalized_sku)
+        return ProductRead.model_validate(product)
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        LOGGER.error("Database error while creating product (SKU: %s): %s", product_data.sku, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create product",
+        ) from exc
+    except Exception as exc:
+        LOGGER.error("Unexpected error while creating product (SKU: %s): %s", product_data.sku, exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create product",
         ) from exc
 
 
